@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Vitamin AI Scanner</title>
+  
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root { --primary: #00C853; --bg-color: #F5F7FA; --text-main: #333; }
+    body { font-family: 'Kanit', sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    .container { width: 100%; max-width: 400px; text-align: center; padding-bottom: 50px; }
+    .header-icon { font-size: 3rem; color: var(--primary); margin-bottom: 10px; }
+    h2 { margin: 0 0 5px 0; font-weight: 600; }
+    p.subtitle { font-size: 0.9rem; color: #666; margin-bottom: 30px; }
+
+    .upload-box { background: #FFF; border: 2px dashed #DDD; border-radius: 20px; padding: 40px 20px; cursor: pointer; position: relative; overflow: hidden; }
+    .upload-icon { font-size: 2.5rem; color: #BBB; margin-bottom: 15px; }
+    #fileInput { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; }
+
+    #loading { display: none; margin-top: 20px; }
+    .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 10px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    #resultArea { display: none; margin-top: 30px; background: #FFF; border-radius: 15px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: left; border-top: 5px solid var(--primary); }
+    #resultContent h3 { color: #009624; margin-top: 0; border-bottom: 1px solid #EEE; padding-bottom: 10px; }
+    #resultContent ul { padding-left: 20px; line-height: 1.6; }
+    
+    /* Disclaimer Style */
+    .disclaimer-box {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #FFF3E0;
+      border-radius: 10px;
+      border-left: 4px solid #FF9800;
+      font-size: 0.85rem;
+      color: #795548;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .error-msg { color: #D32F2F; background: #FFEBEE; padding: 15px; border-radius: 10px; margin-top: 20px; display: none; }
+    
+    .btn-reset {
+      width: 100%; 
+      margin-top: 20px; 
+      padding: 12px; 
+      background: #EEE; 
+      border: none; 
+      border-radius: 8px; 
+      cursor: pointer;
+      font-family: 'Kanit';
+      font-size: 1rem;
+      color: #555;
+      transition: background 0.3s;
+    }
+    .btn-reset:active { background: #DDD; }
+
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="header-icon"><i class="fa-solid fa-pills"></i></div>
+    <h2>Vitamin AI Scanner</h2>
+    <p class="subtitle">สแกนฉลากวิตามินเพื่อดูข้อมูลทันที</p>
+
+    <div class="upload-box" id="uploadZone">
+      <div class="upload-icon"><i class="fa-solid fa-camera"></i></div>
+      <div class="upload-text">แตะเพื่อถ่ายรูป หรือเลือกรูปภาพ</div>
+      <input type="file" accept="image/*" capture="environment" id="fileInput">
+    </div>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <div style="color: var(--primary);">กำลังวิเคราะห์ข้อมูล...<br><small>(อาจใช้เวลา 10-30 วินาที)</small></div>
+    </div>
+
+    <div id="errorMsg" class="error-msg"></div>
+
+    <div id="resultArea">
+      <div id="resultContent"></div>
+      
+      <div class="disclaimer-box">
+        <i class="fa-solid fa-circle-exclamation"></i> 
+        ข้อมูลนี้เป็นข้อมูลเบื้องต้นจาก AI อาจมีข้อผิดพลาดได้ หากต้องการทราบข้อมูลเพิ่มเติมกรุณาสอบถามเภสัชกร
+      </div>
+
+      <button onclick="resetApp()" class="btn-reset">
+        <i class="fa-solid fa-rotate-right"></i> สแกนใหม่
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const LIFF_ID = "<?= LIFF_ID ?>"; 
+
+    async function main() {
+      try { await liff.init({ liffId: LIFF_ID }); if (!liff.isLoggedIn()) liff.login(); } 
+      catch (err) { console.error("LIFF Error", err); }
+    }
+    main();
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      document.getElementById('uploadZone').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('errorMsg').style.display = 'none';
+      document.getElementById('resultArea').style.display = 'none';
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        google.script.run
+          .withSuccessHandler(showResult)
+          .withFailureHandler(showError)
+          .processVitaminOCR(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function showResult(response) {
+      document.getElementById('loading').style.display = 'none';
+      if (response.status === 'success') {
+        document.getElementById('resultContent').innerHTML = response.result;
+        document.getElementById('resultArea').style.display = 'block';
+      } else {
+        showError(response.message);
+      }
+      // Reset input file เพื่อให้เลือกรูปเดิมซ้ำได้ถ้าต้องการ
+      document.getElementById('fileInput').value = '';
+    }
+
+    function showError(error) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('uploadZone').style.display = 'block';
+      const errorDiv = document.getElementById('errorMsg');
+      errorDiv.innerText = "เกิดข้อผิดพลาด: " + error;
+      errorDiv.style.display = 'block';
+      document.getElementById('fileInput').value = '';
+    }
+
+    // ฟังก์ชัน Reset หน้าจอแบบไม่ต้อง Reload Page (แก้ปัญหาหน้าขาว)
+    function resetApp() {
+      document.getElementById('resultArea').style.display = 'none';
+      document.getElementById('errorMsg').style.display = 'none';
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('uploadZone').style.display = 'block';
+      document.getElementById('fileInput').value = '';
+      window.scrollTo(0, 0); // เลื่อนกลับไปบนสุด
+    }
+  </script>
+</body>
+</html>
