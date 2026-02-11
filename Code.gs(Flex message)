@@ -1,0 +1,133 @@
+// เรียกใช้งาน BetterLog และผูกกับ Spreadsheet
+var log = BetterLog.useSpreadsheet(PropertiesService.getScriptProperties().getProperty('SHEET_ID'));
+
+function doPost(e) {
+  try {
+    // --- 1. เริ่มต้นและ Log ข้อมูล Event ---
+    log.info("Received Event: " + JSON.stringify(e));
+
+    if (!e || !e.postData || !e.postData.contents) {
+      log.info("Error: Invalid event data");
+      return ContentService.createTextOutput("Invalid event");
+    }
+
+    var eventData = JSON.parse(e.postData.contents);
+    var userEvent = eventData.events[0];
+    var replyToken = userEvent.replyToken;
+    var userMessage = userEvent.message.text;
+
+    log.info("User Message: " + JSON.stringify(userMessage));
+
+    // --- 2. ตรวจสอบ Keyword "ข้อมูลวิตามิน" ---
+    if (userMessage.trim() === "ข้อมูลวิตามิน") {
+      
+      // ดึง Flex Message แบบ Carousel
+      var carouselMessage = getCarouselFromColumns();
+      
+      if (carouselMessage) {
+        // ส่งข้อความกลับหาผู้ใช้ (ส่ง 1 ข้อความที่เป็น Carousel)
+        sendLineReply(replyToken, [carouselMessage]);
+      } else {
+        log.info("Error: No valid bubble JSON found");
+        sendLineReply(replyToken, [{ type: "text", text: "ไม่พบข้อมูลวิตามิน หรือรูปแบบ JSON ใน Sheet ไม่ถูกต้อง (ต้องเป็น type: bubble)" }]);
+      }
+    } else {
+      log.info("Action: Message ignored (Not matching keyword)");
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({status: "success"})).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    log.info("System Error: " + JSON.stringify(error.message));
+    return ContentService.createTextOutput(JSON.stringify({status: "error"})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// --- ฟังก์ชันดึงข้อมูลจาก Sheet มาทำ Carousel ---
+function getCarouselFromColumns() {
+  try {
+    var sheetId = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sheet = ss.getSheetByName("flex");
+
+    if (!sheet) {
+      log.info("Error: Sheet 'flex' not found");
+      return null;
+    }
+
+    // อ่านข้อมูลแถวที่ 2, คอลัมน์ที่ 1 ถึง 10 (เผื่อไว้ 10 การ์ด)
+    // A2:J2
+    var range = sheet.getRange(2, 1, 1, 10); 
+    var values = range.getValues()[0];
+    
+    var bubbles = [];
+
+    // วนลูปเก็บข้อมูล Bubble จากแต่ละคอลัมน์
+    for (var i = 0; i < values.length; i++) {
+      var jsonString = values[i];
+      
+      if (jsonString && jsonString.toString().trim() !== "") {
+        try {
+          var bubbleObj = JSON.parse(jsonString);
+          
+          // ตรวจสอบว่าเป็น Bubble หรือไม่
+          if (bubbleObj.type === "bubble") {
+            bubbles.push(bubbleObj);
+          } else {
+            log.info("Warning: Column " + (i + 1) + " is not 'type: bubble'. Skipped.");
+          }
+          
+        } catch (parseError) {
+          log.info("JSON Parse Error at Column " + (i + 1));
+        }
+      }
+    }
+    
+    // ถ้ามี Bubble อย่างน้อย 1 อัน ให้สร้าง Carousel
+    if (bubbles.length > 0) {
+      return {
+        type: "flex",
+        altText: "ข้อมูลวิตามิน (Slide ดูข้อมูล)",
+        contents: {
+          type: "carousel", // กำหนดตู้คอนเทนเนอร์เป็น Carousel
+          contents: bubbles // ใส่การ์ด Bubble ทั้งหมดลงไป
+        }
+      };
+    }
+    
+    return null;
+
+  } catch (err) {
+    log.info("Error building carousel: " + JSON.stringify(err.message));
+    return null;
+  }
+}
+
+// --- ฟังก์ชันส่งข้อความกลับ ---
+function sendLineReply(replyToken, messagesPayload) {
+  var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
+  var url = "https://api.line.me/v2/bot/message/reply";
+
+  var payload = {
+    replyToken: replyToken,
+    messages: messagesPayload 
+  };
+
+  log.info("Sending Carousel Payload: " + JSON.stringify(payload));
+
+  var options = {
+    method: "post",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  try {
+    UrlFetchApp.fetch(url, options);
+  } catch (err) {
+    log.info("Error sending message: " + JSON.stringify(err.message));
+  }
+}
